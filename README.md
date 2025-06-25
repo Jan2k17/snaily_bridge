@@ -165,8 +165,8 @@ Entfernt den Job-Status eines Spielers im CAD, wenn er gefeuert wird.
 
 -   **Typ:** Server-Event (das Skript hört zu)
 -   **Parameter:**
--- `employeeIdentifier` (String): Der permanente Identifier des Spielers (z.B. `license:xxxxxxxx`).
--- `jobName` (String): Der Name des Jobs, aus dem der Spieler entlassen wurde.
+- - `employeeIdentifier` (String): Der permanente Identifier des Spielers (z.B. `license:xxxxxxxx`).
+- - `jobName` (String): Der Name des Jobs, aus dem der Spieler entlassen wurde.
 
 **Beispiel (in deinem Job-System):**
 ```lua
