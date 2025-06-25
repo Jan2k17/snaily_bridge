@@ -4,342 +4,362 @@ local API_URL = Config.Snaily.API_URL
 local API_TOKEN = Config.Snaily.API_TOKEN
 local API_TOKEN_HEADER_NAME = Config.Snaily.API_TOKEN_HEADER_NAME
 
-local citizen_id = "error"
-local citizen_ssn = "citizen_ssn"
-local vehicleModelId = "error"
+-- Hilfsfunktion für Logging
+local function LogError(point, errorCode, resultData)
+    print(string.format("[snaily_bridge] Fehler bei API-Anfrage an '%s'. Code: %s, Daten: %s", point, tostring(errorCode), tostring(resultData)))
+end
 
+-- Zentrale Funktion für alle API-Anfragen an SnailyCAD
+local function PerformSnailyRequest(method, endpoint, data, callback)
+    local headers = {
+        [API_TOKEN_HEADER_NAME] = API_TOKEN,
+        ["Content-Type"] = "application/json",
+        ["accept"] = "application/json"
+    }
+    
+    local body = (data and json.encode(data)) or ""
+
+    PerformHttpRequest(API_URL .. endpoint, function(errorCode, resultData, resultHeaders)
+        local status = tostring(errorCode)
+        if status == "200" or status == "201" or status == "204" then
+            if callback then
+                if resultData and resultData ~= "" then
+                    local success, decodedData = pcall(json.decode, resultData)
+                    if success then
+                        callback(decodedData, true)
+                    else
+                        LogError(endpoint, errorCode, "Fehler beim Parsen der JSON-Antwort.")
+                        callback(nil, false)
+                    end
+                else
+                    callback(true, true) -- Erfolgreich, aber keine Daten (z.B. bei DELETE)
+                end
+            end
+        else
+            LogError(endpoint, errorCode, resultData)
+            if callback then
+                callback(nil, false)
+            end
+        end
+    end, method, body, headers)
+end
+
+-- Hilfsfunktion zum Aufteilen von Strings
 local function split(str, sep)
     sep = sep or "%s"
     local t = {}
-    local pos = 1
-    while true do
-        local idx = string.find(str, sep, pos)
-        if idx then
-            table.insert(t, string.sub(str, pos, idx - 1))
-            pos = idx + 1
-        else
-            table.insert(t, string.sub(str, pos))
-            break
-        end
+    for s in string.gmatch(str, "([^" .. sep .. "]+)") do
+        table.insert(t, s)
     end
     return t
 end
 
+-- Formatiert das ESX-Datumsformat in das von SnailyCAD benötigte Format
 function formatDOB(dateofbirth)
-    --   YYYY-MM-DD HH:MM:SS
-    local dob = "1999-01-01 00:00:00"
-    local sep = "-"
-    local res = split(dateofbirth, sep)
-    local dob = res[3] .. '-' .. res[2] .. '-' .. res[1] .. ' 00:00:00'
-    return tostring(dob)
+    local res = split(dateofbirth, "-")
+    return string.format("%s-%s-%s 00:00:00", res[3], res[2], res[1])
 end
 
+-- Formatiert die Daten für verschiedene Endpunkte
 function formatForSnaily(ctype, data)
     local snailyFormatted = {}
-    local sex = data.sex
     if ctype == "character" then
-        if type(data) == "string" then
-            data = json.decode(data)
-        end
+        local sexId = Config.Snaily.IDs.GENDER_OTHER
         if data.sex == "m" then
-            sex = "cm8799uyo01pl5jf6wdi6jteb" -- MALE
+            sexId = Config.Snaily.IDs.GENDER_MALE
         elseif data.sex == "f" then
-            sex = "cm8799uyp01pm5jf6mlly38jq" -- FEMALE
-        else
-            sex = "cm8799uyp01pn5jf6fm9j4jb6"
+            sexId = Config.Snaily.IDs.GENDER_FEMALE
         end
+
         snailyFormatted = {
             name = tostring(data.firstName),
             surname = tostring(data.lastName),
-            gender = tostring(sex),
-            ethnicity = "cm8799mmf01pe5jf64nrfte7l", -- UNKNOWN
+            gender = sexId,
+            ethnicity = Config.Snaily.IDs.ETHNICITY_UNKNOWN,
             dateOfBirth = formatDOB(data.dateofbirth),
             weight = "-/-",
             height = "-/-",
             hairColor = "-/-",
             eyeColor = "-/-",
-            address = tostring("cm87980c000rj5jf6voxdkoxh")
+            address = Config.Snaily.IDs.ADDRESS_UNKNOWN
         }
     elseif ctype == "911" then
-        if type(data) == "string" then
-            data = json.decode(data)
-        end
         snailyFormatted = {
             location = tostring(data.street),
             name = tostring(data.name),
             postal = tostring(data.postal)
         }
     end
-    while snailyFormatted == {} do
-        Wait(0)
-    end
     return snailyFormatted
 end
 
-function SnailyAPIHTTPX(method, point, data, vehicleData)
-    if method == "PUT" then
-        --
-    elseif method == "POST" then
-        if point == "addcop" then
-            -- CITIZENiD - xxx
-            -- DEPARTMENT - cm8798z6i01p35jf675rwsk4p
-            -- CALLSIGN - ??
-            -- CALLSIGN2 - ??
-            -- RANK - ??
-            --[[PerformHttpRequest(API_URL .. "leo", function(errorCode, resultData, resultHeaders)
-                local errorC = tostring(errorCode) == "200"
-                if not errorC then
-                    print("Returned error code:" .. tostring(errorCode))
-                    print("Returned data:" .. tostring(resultData))
-                    print("Returned result Headers:" .. tostring(json.encode(resultHeaders)))
-                    return false
-                else
-                    return true
-                end
-            end, "POST", json.encode(data), {
-                [API_TOKEN_HEADER_NAME] = API_TOKEN,
-                ["accept"] = "application/json",
-                ["Content-Type"] = "application/json"
-            })--]]
-        elseif point == "citizen" then
-            PerformHttpRequest(API_URL .. point, function(errorCode, resultData, resultHeaders)
-                local errorC = tostring(errorCode) == "200"
-                if not errorC then
-                    print("Returned error code:" .. tostring(errorCode))
-                    print("Returned data:" .. tostring(resultData))
-                    print("Returned result Headers:" .. tostring(json.encode(resultHeaders)))
-                    return false
-                else
-                    return true
-                end
-            end, "POST", json.encode(data), {
-                [API_TOKEN_HEADER_NAME] = API_TOKEN,
-                ["accept"] = "application/json",
-                ["Content-Type"] = "application/json"
-            })
-        elseif point == "vehicles" then
-            --print(json.encode(data))
-            PerformHttpRequest(API_URL .. point, function(errorCode, resultData, resultHeaders)
-                local errorC = tostring(errorCode) == "200"
-                if not errorC then
-                    print("Returned error code:" .. tostring(errorCode))
-                    print("Returned data:" .. tostring(resultData))
-                    print("Returned result Headers:" .. tostring(json.encode(resultHeaders)))
-                    return false
-                else
-                    return true
-                end
-            end, "POST", json.encode(data), {
-                [API_TOKEN_HEADER_NAME] = API_TOKEN,
-                ["accept"] = "application/json",
-                ["Content-Type"] = "application/json"
-            })
-        elseif point == "911-calls" then
-            PerformHttpRequest(API_URL .. point, function(errorCode, resultData, resultHeaders)
-                local errorC = tostring(errorCode) == "200"
-                if not errorC then
-                    print("Returned error code:" .. tostring(errorCode))
-                    print("Returned data:" .. tostring(resultData))
-                    print("Returned result Headers:" .. tostring(json.encode(resultHeaders)))
-                    return false
-                else
-                    return true
-                end
-            end, "POST", json.encode(data), {
-                [API_TOKEN_HEADER_NAME] = API_TOKEN,
-                ["Content-Type"] = "application/json"
-            })
-        end
-    elseif method == "GET" then
-        if point == "citizen_id" then
-            citizen_id = "error"
-            PerformHttpRequest(API_URL .. 'citizen?query=' .. data, function(errorCode, resultData, resultHeaders)
-                local errorC = tostring(errorCode) == "200"
-                if not errorC then
-                    print("Returned error code:" .. tostring(errorCode))
-                    print("Returned data:" .. tostring(resultData))
-                    print("Returned result Headers:" .. tostring(json.encode(resultHeaders)))
-                    return false
-                else
-                    local daten = json.decode(resultData)
-                    citizen_id = daten.citizens[1].id
-                    return true
-                end
-            end, "GET", null, {
-                [API_TOKEN_HEADER_NAME] = API_TOKEN,
-                ["Content-Type"] = "application/json"
-            })
-        elseif point == "admin/values/vehicle/search" then
-            PerformHttpRequest(API_URL .. point .. '?query=' .. data, function(errorCode, resultData, resultHeaders)
-                local errorC = tostring(errorCode) == "200"
-                if not errorC then
-                    print("Returned error code:" .. tostring(errorCode))
-                    print("Returned data:" .. tostring(resultData))
-                    print("Returned result Headers:" .. tostring(json.encode(resultHeaders)))
-                    return false
-                else
-                    local daten = json.decode(resultData)
-                    for i, item in pairs(daten) do
-                        if data == string.lower(item.hash) then
-                            vehicleData.model = item.id
-                            SnailyAPIHTTPX("POST", "vehicles", vehicleData)
-                            break
-                        end
-                    end
-                    return true
-                end
-            end, "GET", null, {
-                [API_TOKEN_HEADER_NAME] = API_TOKEN,
-                ["Content-Type"] = "application/json"
-            })
-        elseif point == "citizen_ssn" then
-            citizen_ssn = "error"
-            PerformHttpRequest(API_URL .. 'citizen?query=' .. data, function(errorCode, resultData, resultHeaders)
-                local errorC = tostring(errorCode) == "200"
-                if not errorC then
-                    print("Returned error code:" .. tostring(errorCode))
-                    print("Returned data:" .. tostring(resultData))
-                    print("Returned result Headers:" .. tostring(json.encode(resultHeaders)))
-                    return false
-                else
-                    local daten = json.decode(resultData)
-                    citizen_ssn = daten.citizens[1].socialSecurityNumber
-                    return true
-                end
-            end, "GET", null, {
-                [API_TOKEN_HEADER_NAME] = API_TOKEN,
-                ["accept"] = "application/json",
-                ["Content-Type"] = "application/json"
-            })
-        end
-    end
-end
+--[[ BÜRGER-FUNKTIONEN ]]--
 
-RegisterNetEvent('jan2k17:snaily:911', function(data)
+function getCitizenData(source, callback)
     local xPlayer = ESX.GetPlayerFromId(source)
-    local plz = exports['nearest-postal']:getPostalServer(vec3(data.x, data.y, data.z))
-    local pData = {}
-    pData.street = data.street
-    pData.postal = plz.code
-    pData.name = xPlayer.variables.firstName .. ' ' .. xPlayer.variables.lastName
-    SnailyAPI911CreateNew(pData)
-end)
-
---[[ CREATE 911 ]] --
-function SnailyAPI911CreateNew(data)
-
-    local snailyData = formatForSnaily("911", data)
-    local resp = SnailyAPIHTTPX("POST", "911-calls", snailyData)
-    while resp == nil do
-        Wait(0)
+    if not xPlayer then
+        callback(nil)
+        return
     end
-    if resp then
-        print("Created 911-call: " .. snailyData.name .. " " .. snailyData.surname)
-    else
-        print("Failed to create 911-call: " .. snailyData.name .. " " .. snailyData.surname)
-    end
-end
 
---[[ CREATE CITIZEN ]] --
-function SnailyAPIUserCreateNew(source)
-    local xPlayer = ESX.GetPlayerFromId(source)
-    while xPlayer == nil do
-        Wait(0)
-    end
-    if xPlayer ~= 0 then
-        print("Got user data for: " .. source .. " (" .. GetPlayerName(source) .. ")")
-        local snailyData = formatForSnaily("character", xPlayer.variables)
-        local resp = SnailyAPIHTTPX("POST", "citizen", snailyData)
-        while resp == nil do Wait(0) end
-        if resp then
-            --print("Created user: " .. snailyData.name .. " " .. snailyData.surname)
-            return true
+    local nameQuery = xPlayer.variables.firstName .. '%20' .. xPlayer.variables.lastName
+    PerformSnailyRequest("GET", 'citizen?query=' .. nameQuery, nil, function(data, success)
+        if success and data.citizens and #data.citizens > 0 then
+            callback(data.citizens[1], xPlayer)
         else
-            print("Failed to create user: " .. snailyData.name .. " " .. snailyData.surname)
-            return false
+            callback(nil, xPlayer)
         end
-    else
-        print("Failed to get user data for: " .. source .. " (" .. GetPlayerName(source) .. ")")
-        return false
-    end
+    end)
 end
+
+ESX.RegisterServerCallback('jan2k17:snaily:call:getCitizenSSN', function(source, cb)
+    getCitizenData(source, function(citizen)
+        if citizen and citizen.socialSecurityNumber then
+            cb(citizen.socialSecurityNumber)
+        else
+            cb(nil)
+        end
+    end)
+end)
 
 RegisterNetEvent('jan2k17:snaily:createCitizen', function()
-    SnailyAPIUserCreateNew(source)
+    local source = source
+    getCitizenData(source, function(citizen, xPlayer)
+        if citizen or not xPlayer then return end
+        
+        local snailyData = formatForSnaily("character", xPlayer.variables)
+        PerformSnailyRequest("POST", "citizen", snailyData, function(data, success)
+            if success then
+                print("[snaily_bridge] Bürger erfolgreich erstellt: " .. snailyData.name .. " " .. snailyData.surname)
+            else
+                print("[snaily_bridge] Fehler beim Erstellen des Bürgers: " .. snailyData.name .. " " .. snailyData.surname)
+            end
+        end)
+    end)
 end)
 
---[[ CREATE VEHICLE ]] --
+--[[ 911-FUNKTIONEN ]]--
+
+RegisterNetEvent('jan2k17:snaily:911', function(data)
+    local source = source
+    local xPlayer = ESX.GetPlayerFromId(source)
+    if not xPlayer then return end
+
+    local plz = exports['nearest-postal']:getPostalServer(vec3(data.x, data.y, data.z))
+    local pData = {
+        street = data.street,
+        postal = plz and plz.code or "N/A",
+        name = xPlayer.variables.firstName .. ' ' .. xPlayer.variables.lastName
+    }
+    
+    local snailyData = formatForSnaily("911", pData)
+    PerformSnailyRequest("POST", "911-calls", snailyData, function(data, success)
+        if success then
+            print("[snaily_bridge] 911-Anruf erfolgreich erstellt von: " .. snailyData.name)
+        else
+            print("[snaily_bridge] Fehler beim Erstellen des 911-Anrufs von: " .. snailyData.name)
+        end
+    end)
+end)
+
+--[[ FAHRZEUG-FUNKTIONEN ]]--
+
+local function getVehicleModelIdFromCad(modelHash, callback)
+    local modelQuery = string.lower(modelHash)
+    PerformSnailyRequest("GET", "admin/values/vehicle/search?query=" .. modelQuery, nil, function(modelData, success)
+        if not (success and modelData) then
+            print("[snaily_bridge] Fahrzeugmodell-Suche fehlgeschlagen für: " .. modelQuery)
+            callback(nil)
+            return
+        end
+        
+        local foundModelId
+        for _, item in ipairs(modelData) do
+            if string.lower(item.hash) == modelQuery then
+                foundModelId = item.id
+                break
+            end
+        end
+
+        if not foundModelId then
+            print("[snaily_bridge] Passendes Fahrzeugmodell-Hash nicht gefunden für: " .. modelQuery)
+        end
+        callback(foundModelId)
+    end)
+end
+
+local function postNewVehicleToCad(vehicleData, callback)
+    PerformSnailyRequest("POST", "vehicles", vehicleData, function(_, createSuccess)
+        if createSuccess then
+            print("[snaily_bridge] Fahrzeug erfolgreich im CAD erstellt: " .. vehicleData.plate)
+        else
+            print("[snaily_bridge] Fehler beim Erstellen des Fahrzeugs im CAD: " .. vehicleData.plate)
+        end
+        if callback then callback(createSuccess) end
+    end)
+end
+
 RegisterNetEvent('jan2k17:snaily:createVehicle', function(data, src)
-    print("triggered: createVehicle")
-    local cId = getCitizen(src)
-    local vData = data
-    vData.citizenId = cId
-    vData.model = data.model
-    vData.plate = data.plate
-    vData.color = data.color
-    vData.registrationStatus = data.registrationStatus
-    vData.insuranceStatus = data.insuranceStatus
-    getVehicleID(vData.model, vData)
+    getCitizenData(src, function(citizen)
+        if not (citizen and citizen.id) then return print("[snaily_bridge] Konnte Bürger-ID für Fahrzeughalter nicht finden.") end
+        
+        getVehicleModelIdFromCad(data.model, function(modelId)
+            if not modelId then return end
+
+            local vehicleData = {
+                citizenId = citizen.id,
+                model = modelId,
+                plate = data.plate,
+                color = data.color,
+                registrationStatus = data.registrationStatus,
+                insuranceStatus = data.insuranceStatus
+            }
+            postNewVehicleToCad(vehicleData)
+        end)
+    end)
 end)
 
-function getVehicleID(model, vehicleData)
-    SnailyAPIHTTPX("GET", "admin/values/vehicle/search", model, vehicleData)
-end
+RegisterNetEvent("jobs_creator:actions:vehicleImpounded", function(vehiclePlate, vehicleModel)
+    print(("[snaily_bridge] Event 'vehicleImpounded' für Kennzeichen %s ausgelöst."):format(vehiclePlate))
+    
+    PerformSnailyRequest("GET", "search/vehicle?query=" .. vehiclePlate, nil, function(data, success)
+        if success and data and #data > 0 then
+            local vehicleId = data[1].id
+            local updateData = { registrationStatus = Config.Snaily.StatusIDs.VEHICLE_IMPOUNDED }
 
-function SnailyAPIVehicleCreateNew(vehicleData)
-    local snailyData = vehicleData
-    local resp = SnailyAPIHTTPX("POST", "vehicles", snailyData)
-    while resp == nil do
-        Wait(0)
-    end
-    if resp then
-        print("Created vehicle: " .. snailyData.model .. " " .. snailyData.plate)
-        -- return true
-    else
-        print("Failed to create vehicle: " .. snailyData.model .. " " .. snailyData.plate)
-        -- return false
-    end
-end
+            PerformSnailyRequest("PUT", "vehicles/" .. vehicleId, updateData, function(_, updateSuccess)
+                if updateSuccess then
+                    print(("[snaily_bridge] Fahrzeug %s erfolgreich als beschlagnahmt markiert."):format(vehiclePlate))
+                else
+                    print(("[snaily_bridge] Fehler beim Markieren des Fahrzeugs %s als beschlagnahmt."):format(vehiclePlate))
+                end
+            end)
+        else
+            print(("[snaily_bridge] Fahrzeug %s nicht im CAD gefunden. Lege es neu an..."):format(vehiclePlate))
+            
+            ESX.TriggerServerCallback('esx_vehicleshop:getVehicleOwner', function(ownerIdentifier)
+                if not ownerIdentifier then
+                    return print(("[snaily_bridge] Konnte keinen Halter für das Kennzeichen %s in der Datenbank finden."):format(vehiclePlate))
+                end
+                
+                local ownerPlayer = ESX.GetPlayerFromIdentifier(ownerIdentifier)
+                if not ownerPlayer then
+                    return print(("[snaily_bridge] Halter für Kennzeichen %s ist nicht online."):format(vehiclePlate))
+                end
 
-function getCitizen(source)
-    local xPlayer = ESX.GetPlayerFromId(source)
-    while xPlayer == nil do
-        Wait(0)
-    end
+                getCitizenData(ownerPlayer.source, function(citizen)
+                    if not (citizen and citizen.id) then
+                        return print(("[snaily_bridge] Konnte CAD-Bürger für Halter von %s nicht finden."):format(vehiclePlate))
+                    end
 
-    if xPlayer ~= 0 then
-        -- /citizen?query=
-        local name = xPlayer.variables.firstName .. '%20' .. xPlayer.variables.lastName
-        SnailyAPIHTTPX("GET", "citizen_id", name)
-        while citizen_id == "error" do
-            Wait(0)
+                    getVehicleModelIdFromCad(vehicleModel, function(modelId)
+                        if not modelId then return end
+
+                        local vehicleData = {
+                            citizenId = citizen.id,
+                            model = modelId,
+                            plate = vehiclePlate,
+                            color = "Unbekannt",
+                            registrationStatus = Config.Snaily.StatusIDs.VEHICLE_IMPOUNDED,
+                            insuranceStatus = "Unbekannt"
+                        }
+                        postNewVehicleToCad(vehicleData)
+                    end)
+                end)
+            end, vehiclePlate)
         end
-        return citizen_id
-    end
-end
-
-RegisterNetEvent('jan2k17:snaily:getCitizenSSN', function()
-    return getCitizenSSN(source)
+    end)
 end)
 
-ESX.RegisterServerCallback('jan2k17:snaily:call:getCitizenSSN', function(src, cb)
-    getCitizenSSN(src)
-    cb(citizen_ssn)
-end)
+--[[ JOB-SYNCHRONISATION ]]--
 
-function getCitizenSSN(source)
-    local xPlayer = ESX.GetPlayerFromId(source)
-    while xPlayer == nil do
-        Wait(0)
-    end
-
-    if xPlayer ~= 0 then
-        -- /citizen?query=
-        local name = xPlayer.variables.firstName .. '%20' .. xPlayer.variables.lastName
-        SnailyAPIHTTPX("GET", "citizen_ssn", name)
-        while citizen_ssn == "error" do
-            Wait(0)
+local function getJobConfig(jobName)
+    for jobType, config in pairs(Config.Snaily.JobSync) do
+        for _, name in ipairs(config.job_names) do
+            if name == jobName then
+                return config, jobType
+            end
         end
-        return citizen_ssn
     end
+    return nil, nil
 end
+
+local function setPlayerJobInCad(citizen, jobConfig, jobType)
+    local apiEndpoint
+    if jobType == "police" then apiEndpoint = "leo"
+    elseif jobType == "ems" then apiEndpoint = "ems-fd" end
+    if not apiEndpoint then return end
+    
+    local officerData = {
+        citizenId = citizen.id,
+        department = jobConfig.departmentId,
+        rank = jobConfig.defaultRankId
+    }
+
+    PerformSnailyRequest("POST", apiEndpoint, officerData, function(data, success)
+        if success then
+            print(("[snaily_bridge] Job für %s %s erfolgreich im CAD gesetzt."):format(citizen.name, citizen.surname))
+        else
+            print(("[snaily_bridge] Fehler beim Setzen des Jobs für %s %s im CAD."):format(citizen.name, citizen.surname))
+        end
+    end)
+end
+
+RegisterNetEvent("jobs_creator:boss:playerHired", function(playerId, jobName)
+    local jobConfig, jobType = getJobConfig(jobName)
+    if not jobConfig then return end
+
+    print(("[snaily_bridge] Spieler %d wurde als %s eingestellt. Synchronisiere mit CAD..."):format(playerId, jobName))
+    
+    getCitizenData(playerId, function(citizen, xPlayer)
+        if citizen then
+            -- Bürger existiert, Job setzen
+            setPlayerJobInCad(citizen, jobConfig, jobType)
+        elseif xPlayer then
+            -- Bürger existiert nicht, aber Spieler ist online -> zuerst erstellen
+            print(("[snaily_bridge] Bürger für Spieler %s existiert nicht. Erstelle ihn zuerst..."):format(xPlayer.getName()))
+            
+            local snailyData = formatForSnaily("character", xPlayer.variables)
+            PerformSnailyRequest("POST", "citizen", snailyData, function(newCitizenData, success)
+                if success then
+                    print(("[snaily_bridge] Bürger erfolgreich erstellt: %s %s. Setze nun den Job..."):format(snailyData.name, snailyData.surname))
+                    -- Jetzt, da der Bürger erstellt ist, den Job setzen
+                    setPlayerJobInCad(newCitizenData, jobConfig, jobType)
+                else
+                    print(("[snaily_bridge] Konnte Bürger für Job-Sync nicht erstellen (PlayerID: %d)."):format(playerId))
+                end
+            end)
+        else
+            print(("[snaily_bridge] Konnte Spieler für Job-Sync nicht finden (PlayerID: %d)."):format(playerId))
+        end
+    end)
+end)
+
+RegisterNetEvent("jobs_creator:boss:employeeFired", function(employeeIdentifier, jobName)
+    local jobConfig, jobType = getJobConfig(jobName)
+    if not jobConfig then return end
+
+    local xPlayer = ESX.GetPlayerFromIdentifier(employeeIdentifier)
+    if not xPlayer then return print(("[snaily_bridge] Konnte Spieler für Kündigungs-Sync nicht finden (Identifier: %s)."):format(employeeIdentifier)) end
+
+    print(("[snaily_bridge] Spieler %s wurde als %s gefeuert. Synchronisiere mit CAD..."):format(xPlayer.getName(), jobName))
+
+    getCitizenData(xPlayer.source, function(citizen)
+        if not (citizen and citizen.id) then
+            return print(("[snaily_bridge] Konnte Bürger für Kündigungs-Sync nicht finden (Player: %s)."):format(xPlayer.getName()))
+        end
+        
+        local apiEndpoint
+        if jobType == "police" then apiEndpoint = "leo/" .. citizen.id
+        elseif jobType == "ems" then apiEndpoint = "ems-fd/" .. citizen.id end
+        if not apiEndpoint then return end
+
+        PerformSnailyRequest("DELETE", apiEndpoint, nil, function(_, success)
+            if success then
+                print(("[snaily_bridge] Job für %s %s erfolgreich im CAD entfernt."):format(citizen.name, citizen.surname))
+            else
+                print(("[snaily_bridge] Fehler beim Entfernen des Jobs für %s %s im CAD."):format(citizen.name, citizen.surname))
+            end
+        end)
+    end)
+end)
