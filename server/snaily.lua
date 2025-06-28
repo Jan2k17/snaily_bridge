@@ -77,10 +77,14 @@ function formatForSnaily(ctype, data)
             gender = sexId,
             ethnicity = Config.Snaily.IDs.ETHNICITY_UNKNOWN,
             dateOfBirth = formatDOB(data.dateofbirth),
-            weight = "-/-",
-            height = "-/-",
-            hairColor = "-/-",
-            eyeColor = "-/-",
+            
+            -- *** HIER IST DIE ÄNDERUNG ***
+            -- Die neuen, erforderlichen Felder werden jetzt mit den Werten aus der Config gefüllt
+            weight = Config.Snaily.IDs.WEIGHT_UNKNOWN,
+            height = Config.Snaily.IDs.HEIGHT_UNKNOWN,
+            hairColor = Config.Snaily.IDs.HAIR_COLOR_UNKNOWN,
+            eyeColor = Config.Snaily.IDs.EYE_COLOR_UNKNOWN,
+            
             address = Config.Snaily.IDs.ADDRESS_UNKNOWN
         }
     elseif ctype == "911" then
@@ -162,6 +166,22 @@ RegisterNetEvent('jan2k17:snaily:911', function(data)
     end)
 end)
 
+RegisterNetEvent('jan2k17:snaily:create911Call', function(callData)
+    if not callData or not callData.location or not callData.name then
+        print("[snaily_bridge] Fehler: Unvollständige Daten für create911Call erhalten.")
+        return
+    end
+
+    PerformSnailyRequest("POST", "911-calls", callData, function(data, success)
+        if success then
+            print(("[snaily_bridge] Benutzerdefinierter 911-Anruf erfolgreich erstellt von: %s"):format(callData.name))
+        else
+            print(("[snaily_bridge] Fehler beim Erstellen des benutzerdefinierten 911-Anrufs von: %s"):format(callData.name))
+        end
+    end)
+end)
+
+
 --[[ FAHRZEUG-FUNKTIONEN ]]--
 
 local function getVehicleModelIdFromCad(modelHash, callback)
@@ -210,7 +230,7 @@ RegisterNetEvent('jan2k17:snaily:createVehicle', function(data, src)
                 citizenId = citizen.id,
                 model = modelId,
                 plate = data.plate,
-                color = data.color,
+                color = data.color, -- Hier wird eine ID von einem anderen Skript erwartet
                 registrationStatus = data.registrationStatus,
                 insuranceStatus = data.insuranceStatus
             }
@@ -219,11 +239,12 @@ RegisterNetEvent('jan2k17:snaily:createVehicle', function(data, src)
     end)
 end)
 
-RegisterNetEvent("jobs_creator:actions:vehicleImpounded", function(vehiclePlate, vehicleModel)
+RegisterNetEvent("jan2k17:snaily:vehicleImpounded", function(vehiclePlate, vehicleModel)
     print(("[snaily_bridge] Event 'vehicleImpounded' für Kennzeichen %s ausgelöst."):format(vehiclePlate))
     
     PerformSnailyRequest("GET", "search/vehicle?query=" .. vehiclePlate, nil, function(data, success)
         if success and data and #data > 0 then
+            -- Fahrzeug existiert: Status aktualisieren
             local vehicleId = data[1].id
             local updateData = { registrationStatus = Config.Snaily.StatusIDs.VEHICLE_IMPOUNDED }
 
@@ -235,44 +256,29 @@ RegisterNetEvent("jobs_creator:actions:vehicleImpounded", function(vehiclePlate,
                 end
             end)
         else
-            print(("[snaily_bridge] Fahrzeug %s nicht im CAD gefunden. Lege es neu an..."):format(vehiclePlate))
+            -- Fahrzeug existiert nicht: Neu ohne Halter anlegen
+            print(("[snaily_bridge] Fahrzeug %s nicht im CAD gefunden. Lege es ohne Halter neu an..."):format(vehiclePlate))
             
-            ESX.TriggerServerCallback('esx_vehicleshop:getVehicleOwner', function(ownerIdentifier)
-                if not ownerIdentifier then
-                    return print(("[snaily_bridge] Konnte keinen Halter für das Kennzeichen %s in der Datenbank finden."):format(vehiclePlate))
-                end
-                
-                local ownerPlayer = ESX.GetPlayerFromIdentifier(ownerIdentifier)
-                if not ownerPlayer then
-                    return print(("[snaily_bridge] Halter für Kennzeichen %s ist nicht online."):format(vehiclePlate))
-                end
+            -- Die korrekte Logik wird wiederhergestellt
+            getVehicleModelIdFromCad(vehicleModel, function(modelId)
+                if not modelId then return end
 
-                getCitizenData(ownerPlayer.source, function(citizen)
-                    if not (citizen and citizen.id) then
-                        return print(("[snaily_bridge] Konnte CAD-Bürger für Halter von %s nicht finden."):format(vehiclePlate))
-                    end
-
-                    getVehicleModelIdFromCad(vehicleModel, function(modelId)
-                        if not modelId then return end
-
-                        local vehicleData = {
-                            citizenId = citizen.id,
-                            model = modelId,
-                            plate = vehiclePlate,
-                            color = "Unbekannt",
-                            registrationStatus = Config.Snaily.StatusIDs.VEHICLE_IMPOUNDED,
-                            insuranceStatus = "Unbekannt"
-                        }
-                        postNewVehicleToCad(vehicleData)
-                    end)
-                end)
-            end, vehiclePlate)
+                local vehicleData = {
+                    citizenId = nil, -- Korrekt auf nil gesetzt für halterlose Fahrzeuge
+                    model = modelId,
+                    plate = vehiclePlate,
+                    -- Es werden nun die IDs aus der Config verwendet
+                    color = Config.Snaily.IDs.COLOR_UNKNOWN,
+                    registrationStatus = Config.Snaily.StatusIDs.VEHICLE_IMPOUNDED,
+                    insuranceStatus = Config.Snaily.IDs.INSURANCE_UNKNOWN
+                }
+                postNewVehicleToCad(vehicleData)
+            end)
         end
     end)
 end)
 
 --[[ JOB-SYNCHRONISATION ]]--
-
 local function getJobConfig(jobName)
     for jobType, config in pairs(Config.Snaily.JobSync) do
         for _, name in ipairs(config.job_names) do
@@ -305,7 +311,7 @@ local function setPlayerJobInCad(citizen, jobConfig, jobType)
     end)
 end
 
-RegisterNetEvent("jobs_creator:boss:playerHired", function(playerId, jobName)
+RegisterNetEvent("jan2k17:snaily:boss:playerHired", function(playerId, jobName)
     local jobConfig, jobType = getJobConfig(jobName)
     if not jobConfig then return end
 
@@ -313,17 +319,14 @@ RegisterNetEvent("jobs_creator:boss:playerHired", function(playerId, jobName)
     
     getCitizenData(playerId, function(citizen, xPlayer)
         if citizen then
-            -- Bürger existiert, Job setzen
             setPlayerJobInCad(citizen, jobConfig, jobType)
         elseif xPlayer then
-            -- Bürger existiert nicht, aber Spieler ist online -> zuerst erstellen
             print(("[snaily_bridge] Bürger für Spieler %s existiert nicht. Erstelle ihn zuerst..."):format(xPlayer.getName()))
             
             local snailyData = formatForSnaily("character", xPlayer.variables)
             PerformSnailyRequest("POST", "citizen", snailyData, function(newCitizenData, success)
                 if success then
                     print(("[snaily_bridge] Bürger erfolgreich erstellt: %s %s. Setze nun den Job..."):format(snailyData.name, snailyData.surname))
-                    -- Jetzt, da der Bürger erstellt ist, den Job setzen
                     setPlayerJobInCad(newCitizenData, jobConfig, jobType)
                 else
                     print(("[snaily_bridge] Konnte Bürger für Job-Sync nicht erstellen (PlayerID: %d)."):format(playerId))
@@ -335,7 +338,7 @@ RegisterNetEvent("jobs_creator:boss:playerHired", function(playerId, jobName)
     end)
 end)
 
-RegisterNetEvent("jobs_creator:boss:employeeFired", function(employeeIdentifier, jobName)
+RegisterNetEvent("jan2k17:snaily:boss:employeeFired", function(employeeIdentifier, jobName)
     local jobConfig, jobType = getJobConfig(jobName)
     if not jobConfig then return end
 
@@ -361,5 +364,39 @@ RegisterNetEvent("jobs_creator:boss:employeeFired", function(employeeIdentifier,
                 print(("[snaily_bridge] Fehler beim Entfernen des Jobs für %s %s im CAD."):format(citizen.name, citizen.surname))
             end
         end)
+    end)
+end)
+
+--[[
+    Serverseitiger Export zum Abrufen der SSN eines Spielers.
+    Nimmt jetzt direkt das xPlayer-Objekt entgegen.
+    Da die Anfrage an das CAD asynchron ist, wird eine Callback-Funktion benötigt.
+
+    @param xPlayer (object): Das ESX-Spielerobjekt.
+    @param callback (function): Eine Funktion, die aufgerufen wird, sobald die SSN verfügbar ist.
+                               Die Funktion erhält die SSN als einziges Argument (oder nil, falls nicht gefunden).
+--]]
+exports('getSSN', function(xPlayer, callback)
+    -- Prüfen, ob ein gültiges xPlayer-Objekt übergeben wurde
+    if not xPlayer or not xPlayer.source then
+        if callback and type(callback) == 'function' then
+            -- Wenn kein gültiges Objekt, wird der Callback mit 'nil' aufgerufen.
+            callback(nil)
+        end
+        return
+    end
+
+    -- Wir verwenden die bereits existierende Funktion mit der 'source' aus dem xPlayer-Objekt.
+    getCitizenData(xPlayer.source, function(citizen)
+        -- Prüfen, ob ein Bürger gefunden wurde und ob eine Callback-Funktion übergeben wurde.
+        if callback and type(callback) == 'function' then
+            if citizen and citizen.socialSecurityNumber then
+                -- Wenn alles erfolgreich war, rufen wir den Callback mit der SSN auf.
+                callback(citizen.socialSecurityNumber)
+            else
+                -- Wenn kein Bürger oder keine SSN gefunden wurde, rufen wir den Callback mit 'nil' auf.
+                callback(nil)
+            end
+        end
     end)
 end)

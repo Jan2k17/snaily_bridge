@@ -27,3 +27,22 @@ RegisterNetEvent('jan2k17:snaily:client:createCitizen')
 AddEventHandler('jan2k17:snaily:client:createCitizen', function()
     TriggerServerEvent('jan2k17:snaily:createCitizen')
 end)
+
+--[[ Beispiel für den Aufruf von einem Client-Skript:
+
+-- 1. Erstelle die Daten für den Notruf in einer Lua-Tabelle
+local callData = {
+    location = "Teststraße 123",
+    postal = "565",
+    name = "Testfall",
+    description = "Ein Testeintrag zur Fehlersuche.",
+    gtaMapPosition = {
+        x = 250.222,
+        y = 444.5312,
+        z = 0.0,
+        heading = 360.0
+    }
+}
+
+-- 2. Sende die Daten an den neuen Server-Event
+TriggerServerEvent('jan2k17:snaily:create911Call', callData)--]]
