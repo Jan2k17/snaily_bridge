@@ -77,14 +77,10 @@ function formatForSnaily(ctype, data)
             gender = sexId,
             ethnicity = Config.Snaily.IDs.ETHNICITY_UNKNOWN,
             dateOfBirth = formatDOB(data.dateofbirth),
-            
-            -- *** HIER IST DIE ÄNDERUNG ***
-            -- Die neuen, erforderlichen Felder werden jetzt mit den Werten aus der Config gefüllt
             weight = Config.Snaily.IDs.WEIGHT_UNKNOWN,
             height = Config.Snaily.IDs.HEIGHT_UNKNOWN,
             hairColor = Config.Snaily.IDs.HAIR_COLOR_UNKNOWN,
             eyeColor = Config.Snaily.IDs.EYE_COLOR_UNKNOWN,
-            
             address = Config.Snaily.IDs.ADDRESS_UNKNOWN
         }
     elseif ctype == "911" then
@@ -230,7 +226,7 @@ RegisterNetEvent('jan2k17:snaily:createVehicle', function(data, src)
                 citizenId = citizen.id,
                 model = modelId,
                 plate = data.plate,
-                color = data.color, -- Hier wird eine ID von einem anderen Skript erwartet
+                color = data.color,
                 registrationStatus = data.registrationStatus,
                 insuranceStatus = data.insuranceStatus
             }
@@ -244,7 +240,6 @@ RegisterNetEvent("jan2k17:snaily:vehicleImpounded", function(vehiclePlate, vehic
     
     PerformSnailyRequest("GET", "search/vehicle?query=" .. vehiclePlate, nil, function(data, success)
         if success and data and #data > 0 then
-            -- Fahrzeug existiert: Status aktualisieren
             local vehicleId = data[1].id
             local updateData = { registrationStatus = Config.Snaily.StatusIDs.VEHICLE_IMPOUNDED }
 
@@ -256,18 +251,15 @@ RegisterNetEvent("jan2k17:snaily:vehicleImpounded", function(vehiclePlate, vehic
                 end
             end)
         else
-            -- Fahrzeug existiert nicht: Neu ohne Halter anlegen
             print(("[snaily_bridge] Fahrzeug %s nicht im CAD gefunden. Lege es ohne Halter neu an..."):format(vehiclePlate))
             
-            -- Die korrekte Logik wird wiederhergestellt
             getVehicleModelIdFromCad(vehicleModel, function(modelId)
                 if not modelId then return end
 
                 local vehicleData = {
-                    citizenId = nil, -- Korrekt auf nil gesetzt für halterlose Fahrzeuge
+                    citizenId = nil,
                     model = modelId,
                     plate = vehiclePlate,
-                    -- Es werden nun die IDs aus der Config verwendet
                     color = Config.Snaily.IDs.COLOR_UNKNOWN,
                     registrationStatus = Config.Snaily.StatusIDs.VEHICLE_IMPOUNDED,
                     insuranceStatus = Config.Snaily.IDs.INSURANCE_UNKNOWN
@@ -279,6 +271,7 @@ RegisterNetEvent("jan2k17:snaily:vehicleImpounded", function(vehiclePlate, vehic
 end)
 
 --[[ JOB-SYNCHRONISATION ]]--
+
 local function getJobConfig(jobName)
     for jobType, config in pairs(Config.Snaily.JobSync) do
         for _, name in ipairs(config.job_names) do
@@ -370,33 +363,40 @@ end)
 --[[
     Serverseitiger Export zum Abrufen der SSN eines Spielers.
     Nimmt jetzt direkt das xPlayer-Objekt entgegen.
-    Da die Anfrage an das CAD asynchron ist, wird eine Callback-Funktion benötigt.
-
-    @param xPlayer (object): Das ESX-Spielerobjekt.
-    @param callback (function): Eine Funktion, die aufgerufen wird, sobald die SSN verfügbar ist.
-                               Die Funktion erhält die SSN als einziges Argument (oder nil, falls nicht gefunden).
 --]]
 exports('getSSN', function(xPlayer, callback)
-    -- Prüfen, ob ein gültiges xPlayer-Objekt übergeben wurde
     if not xPlayer or not xPlayer.source then
         if callback and type(callback) == 'function' then
-            -- Wenn kein gültiges Objekt, wird der Callback mit 'nil' aufgerufen.
             callback(nil)
         end
         return
     end
 
-    -- Wir verwenden die bereits existierende Funktion mit der 'source' aus dem xPlayer-Objekt.
     getCitizenData(xPlayer.source, function(citizen)
-        -- Prüfen, ob ein Bürger gefunden wurde und ob eine Callback-Funktion übergeben wurde.
         if callback and type(callback) == 'function' then
             if citizen and citizen.socialSecurityNumber then
-                -- Wenn alles erfolgreich war, rufen wir den Callback mit der SSN auf.
                 callback(citizen.socialSecurityNumber)
             else
-                -- Wenn kein Bürger oder keine SSN gefunden wurde, rufen wir den Callback mit 'nil' auf.
                 callback(nil)
             end
         end
     end)
 end)
+
+--[[ Test-Befehl für den SSN-Export ]]
+RegisterCommand('getmyssn', function(source, args, rawCommand)
+    local xPlayer = ESX.GetPlayerFromId(source)
+    if not xPlayer then return end
+
+    print(string.format("[snaily_bridge] Test-Befehl 'getmyssn' von %s (Source: %d) ausgelöst. Rufe Export auf...", xPlayer.getName(), source))
+
+    exports['snaily_bridge']:getSSN(xPlayer, function(ssn)
+        if ssn then
+            TriggerClientEvent('esx:showNotification', source, 'Deine SSN lautet: ~g~' .. ssn)
+            print(string.format("[snaily_bridge] SSN für %s erfolgreich gefunden: %s", xPlayer.getName(), ssn))
+        else
+            TriggerClientEvent('esx:showNotification', source, '~r~Es konnte keine SSN für dich gefunden werden.')
+            print(string.format("[snaily_bridge] Keine SSN für %s gefunden.", xPlayer.getName()))
+        end
+    end)
+end, false)
